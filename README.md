@@ -25,8 +25,6 @@ firewall-cmd --permanent --add-port 21066/tcp
 
 * No support for DLM deadlock detection so far.
 
-* No support for configuring DLM to use SCTP so far.
-
 * The kernel DLM does not like to be shut down, at least not by its controlling
   process, and sometimes deadlocks doing that.  This still needs to be
   investigated.

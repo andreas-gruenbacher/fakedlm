@@ -171,6 +171,7 @@ static const char *progname;
 static char *cluster_name;
 static int fakedlm_port = FAKEDLM_PORT;
 static int dlm_port = DLM_PORT;
+static enum { PROTO_TCP, PROTO_SCTP } dlm_protocol;
 static int kernel_monitor_fd = -1;
 static int control_fd = -1;
 static struct lockspace *lockspaces;
@@ -1330,6 +1331,10 @@ configure_dlm(void)
 		printf_pathf("%d", "%s", DLM_PORT,
 			     CONFIG_DLM_CLUSTER "tcp_port");
 	}
+	if (dlm_protocol != PROTO_TCP) {
+		printf_pathf("%d", "%s", dlm_protocol,
+			     CONFIG_DLM_CLUSTER "protocol");
+	}
 	for (node = nodes; node; node = node->next) {
 		configure_node(node);
 	}
@@ -1553,6 +1558,7 @@ static struct option long_options[] = {
 	{ "cluster-name", required_argument, NULL, 'n' },
 	{ "fakedlm-port", required_argument, NULL, 'P' },
 	{ "dlm-port", required_argument, NULL, 'p' },
+	{ "sctp", no_argument, NULL, 2 },
 	{ "verbose", no_argument, NULL, 'v' },
 	{ }
 };
@@ -1567,6 +1573,10 @@ int main(int argc, char *argv[])
 		switch(opt) {
 		case 1:  /* node */
 			node_names[count++] = optarg;
+			break;
+
+		case 2:  /* --sctp */
+			dlm_protocol = PROTO_SCTP;
 			break;
 
 		case 'n':  /* --cluster-name */
