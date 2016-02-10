@@ -88,6 +88,7 @@
 #include "addr.h"
 #include "modprobe.h"
 #include "crc.h"
+#include "list.h"
 
 #define DLM_SYSFS_DIR "/sys/kernel/dlm"
 #define MISC_PREFIX "/dev/misc/"
@@ -134,6 +135,7 @@ struct lockspace {
 };
 
 struct aio_request {
+	struct list_head list;
 	struct aiocb aiocb;
 	void (*complete)(struct aio_request *);
 };
@@ -182,6 +184,8 @@ static node_mask_t connected_nodes;
 static int shut_down;
 struct poll_callbacks cbs;
 static bool verbose;
+static LIST_HEAD(aio_pending);
+LIST_HEAD(aio_completed);
 
 #define MSG_NAME(x) [MSG_ ## x] = #x
 static const char *msg_names[] = {
@@ -440,6 +444,26 @@ new_lockspace(const char *name)
 static void
 complete_release(struct aio_request *aio_req)
 {
+	struct dlm_write_request *req = (void *)aio_req->aiocb.aio_buf;
+	struct lockspace *ls;
+
+	for (ls = lockspaces; ls; ls = ls->next) {
+		if (ls->minor == req->i.lspace.minor)
+			break;
+	}
+	if (ls) {
+		/*
+		 * Lockspaces are reference counted in the kernel.  The first
+		 * DLM_USER_CREATE_LOCKSPACE request creates a lockspace; the
+		 * last DLM_USER_REMOVE_LOCKSPACE request removes it.  Continue
+		 * removing the lockspace until it disappears.
+		 */
+		list_add(&aio_req->list, &aio_pending);
+		if (aio_write(&aio_req->aiocb) == 0)
+			return;
+		list_del(&aio_req->list);
+		fail(NULL);
+	}
 	free((void *)aio_req->aiocb.aio_buf);
 	free(aio_req);
 }
@@ -447,7 +471,10 @@ complete_release(struct aio_request *aio_req)
 /*
  * Ask the kernel to release / remove a lockspace.  Lockspaces are reference
  * counted and are only removed once their reference count drops to zero.
- * (The force parameter does not override reference counting.)
+ *
+ * The force parameter forces releasing a lockspace even when there are active
+ * locks; otherwise, releasing a lockspace with active locks fails with
+ * errno == EBUSY.
  *
  * Triggers an offline@/kernel/dlm/<name> uevent when the lockspace is removed
  * which FakeDLM / dlm_controld the uses for leaving the lockspace cluster-wide
@@ -491,8 +518,11 @@ release_lockspace(struct lockspace *ls, bool force)
 	aio_req->aiocb.aio_nbytes = sizeof(*req);
 	aio_req->aiocb.aio_buf = req;
 	aio_req->complete = complete_release;
-	if (aio_write(&aio_req->aiocb) == -1)
-		fail(NULL);
+	list_add(&aio_req->list, &aio_pending);
+	if (aio_write(&aio_req->aiocb) == 0)
+		return;
+	list_del(&aio_req->list);
+	fail(NULL);
 }
 
 static void
@@ -688,8 +718,11 @@ stop_lockspace(struct lockspace *ls)
 	aio_req->aiocb.aio_nbytes = 1;
 	aio_req->aiocb.aio_buf = "0";
 	aio_req->complete = complete_stop_lockspace;
-	if (aio_write(&aio_req->aiocb) == -1)
-		failf("%s/%s/control", DLM_SYSFS_DIR, ls->name);
+	list_add(&aio_req->list, &aio_pending);
+	if (aio_write(&aio_req->aiocb) == 0)
+		return;
+	list_del(&aio_req->list);
+	failf("%s/%s/control", DLM_SYSFS_DIR, ls->name);
 }
 
 /*
@@ -1434,38 +1467,31 @@ static void
 event_loop(void)
 {
 	node_mask_t old_connected_nodes = 0;
+	int old_shut_down = 0;
 
-	while (!shut_down || joined_lockspaces) {
+	while (!old_shut_down ||
+	       joined_lockspaces ||
+	       !list_empty(&aio_pending) ||
+	       !list_empty(&aio_completed)) {
 		int ret, n;
 
 		if (connected_nodes != old_connected_nodes) {
-			/*
-			 * Signal handlers could change connected_nodes, so
-			 * remember the before and after values locally.
-			 */
-
-			node_mask_t before = old_connected_nodes;
-			node_mask_t after = connected_nodes;
-
-			old_connected_nodes = connected_nodes;
 			if (verbose) {
-				print_nodes(stdout, after);
+				print_nodes(stdout, connected_nodes);
 				printf("\n");
 				fflush(stdout);
 			}
-			if (after == all_nodes) {
+			if (connected_nodes == all_nodes) {
 				printf("DLM started\n");
 				fflush(stdout);
-			} else if (before == all_nodes) {
+			} else if (old_connected_nodes == all_nodes) {
 				printf("DLM stopped\n");
 				fflush(stdout);
 			}
+			old_connected_nodes = connected_nodes;
 		}
-		ret = poll(cbs.pollfds, cbs.num, -1);
-		if (ret == -1) {
-			if (!shut_down)
-				continue;
 
+		if (old_shut_down != shut_down) {
 			switch(shut_down) {
 			case 1:
 				printf("Shutting down (press ^C to enforce)\n");
@@ -1483,6 +1509,32 @@ event_loop(void)
 				release_lockspaces(shut_down > 1);
 			else
 				break;
+			old_shut_down = shut_down;
+			continue;
+		}
+
+		if (!list_empty(&aio_completed)) {
+			while (!list_empty(&aio_completed)) {
+				struct aio_request *req =
+					list_first_entry(&aio_completed,
+							 struct aio_request,
+							 list);
+				int err;
+
+				list_del(&req->list);
+				err = aio_error(&req->aiocb);
+				if (err > 0)
+					errno = err;
+				req->complete(req);
+			}
+			continue;
+		}
+
+		ret = poll(cbs.pollfds, cbs.num, -1);
+		if (ret == -1) {
+			if (errno == EINTR)
+				continue;
+			fail(NULL);
 		}
 
 		for (n = 0; n < cbs.num; n++) {
@@ -1517,10 +1569,9 @@ handle_aio(int sig, siginfo_t *si, void *ucontext)
 		int err;
 
 		err = aio_error(&req->aiocb);
-		if (err != EINPROGRESS && err != ECANCELED) {
-			if (err > 0)
-				errno = err;
-			req->complete(req);
+		if (err != EINPROGRESS) {
+			list_del(&req->list);
+			list_add_tail(&req->list, &aio_completed);
 		}
 	}
 }
@@ -1533,12 +1584,13 @@ setup_signals(void)
 	memset(&sa, 0, sizeof(sa));
 	sigemptyset(&sa.sa_mask);
 
+	sa.sa_flags = SA_RESTART;
 	sa.sa_handler = handle_shutdown;
 	if (sigaction(SIGINT, &sa, NULL) == -1 ||
 	    sigaction(SIGTERM, &sa, NULL) == -1)
 		fail(NULL);
 
-	sa.sa_flags = SA_SIGINFO;
+	sa.sa_flags = SA_RESTART | SA_SIGINFO;
 	sa.sa_sigaction = handle_aio;
 	if (sigaction(SIGUSR1, &sa, NULL) == -1)
 		fail(NULL);
