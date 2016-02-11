@@ -862,7 +862,7 @@ lockspace_offline_uevent(const char *name)
 static int
 open_udev_device(const char *path, int flags, int timeout)
 {
-	int fd, step = 100;
+	int fd, step = 10000;
 
 	fd = open(path, flags);
 	while (fd == -1 && errno == ENOENT && timeout >= step) {
@@ -890,7 +890,7 @@ monitor_kernel(void)
 		if (access(CONFIG_DLM, X_OK) == -1)
 			fail(CONFIG_DLM);
 	}
-	kernel_monitor_fd = open_udev_device(DLM_MONITOR_PATH, O_RDONLY, 10000);
+	kernel_monitor_fd = open_udev_device(DLM_MONITOR_PATH, O_RDONLY, 5000000);
 	if (kernel_monitor_fd == -1)
 		fail(DLM_MONITOR_PATH);
 }
