@@ -169,6 +169,8 @@ struct proto_msg {
 	char lockspace_name[DLM_LOCKSPACE_LEN];
 };
 
+bool verbose;
+
 static const char *progname;
 static char *cluster_name;
 static int fakedlm_port = FAKEDLM_PORT;
@@ -183,7 +185,6 @@ static node_mask_t all_nodes;
 static node_mask_t connected_nodes;
 static int shut_down;
 struct poll_callbacks cbs;
-static bool verbose;
 static LIST_HEAD(aio_pending);
 LIST_HEAD(aio_completed);
 
@@ -1385,6 +1386,11 @@ remove_dlm(void)
 	for (node = nodes; node; node = node->next)
 		rmdirf("%scomms/%d", CONFIG_DLM_CLUSTER, node->nodeid);
 	rmdirf("%s", CONFIG_DLM_CLUSTER);
+
+	if (control_fd != -1)
+		close(control_fd);
+	close(kernel_monitor_fd);
+	rmmod("dlm");
 }
 
 /*
@@ -1482,10 +1488,10 @@ event_loop(void)
 				fflush(stdout);
 			}
 			if (connected_nodes == all_nodes) {
-				printf("DLM started\n");
+				printf("DLM ready\n");
 				fflush(stdout);
 			} else if (old_connected_nodes == all_nodes) {
-				printf("DLM stopped\n");
+				printf("DLM not ready\n");
 				fflush(stdout);
 			}
 			old_connected_nodes = connected_nodes;

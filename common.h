@@ -8,6 +8,7 @@
 
 #include <fcntl.h>
 #include <stdarg.h>
+#include <stdbool.h>
 
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof(*(x)))
 
@@ -28,5 +29,7 @@ extern int __attribute__((format(printf, 2, 3))) open_pathf(int flags, const cha
 extern void vwrite_pathf(void *value, int len, const char *path_format, va_list ap);
 extern void write_pathf(void *value, int len, const char *path_format, ...);
 extern void printf_pathf(const char *value_format, const char *path_format, ...);
+
+extern bool verbose;
 
 #endif  /* __COMMON_H */
