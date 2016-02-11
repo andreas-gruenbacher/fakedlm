@@ -1,4 +1,5 @@
 *.o
+*.d
 /fakedlm
 /dlmtest
 /lockspace
