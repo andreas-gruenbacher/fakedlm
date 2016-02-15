@@ -56,6 +56,17 @@ fail(const char *s)
 }
 
 void
+warn(const char *fmt, ...)
+{
+	va_list ap;
+
+	va_start(ap, fmt);
+	vfprintf(stderr, fmt, ap);
+	fputc('\n', stderr);
+	va_end(ap);
+}
+
+void
 mkdirf(mode_t mode, const char *fmt, ...)
 {
 	va_list ap, aq;

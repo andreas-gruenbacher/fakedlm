@@ -22,6 +22,7 @@
 extern void  __attribute__((noreturn)) vfailf(const char *fmt, va_list ap);
 extern void  __attribute__((format(printf, 1, 2),noreturn)) failf(const char *fmt, ...);
 extern void  __attribute__((noreturn)) fail(const char *s);
+extern void __attribute__((format(printf, 1, 2))) warn(const char *fmt, ...);
 extern void __attribute__((format(printf, 2, 3))) mkdirf(mode_t mode, const char *fmt, ...);
 extern void __attribute__((format(printf, 1, 2))) rmdirf(const char *fmt, ...);
 extern int vopen_pathf(int flags, mode_t mode, const char *fmt, va_list ap);

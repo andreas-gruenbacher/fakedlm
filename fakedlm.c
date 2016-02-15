@@ -846,10 +846,12 @@ lockspace_offline_uevent(const char *name)
 
 	ls->leaving |= node_mask(local_node);
 	ls->stopped |= node_mask(local_node);
-	for (node = nodes; node; node = node->next) {
-		if (node == local_node)
-			continue;
-		sent |= send_msg(node, MSG_STOP_LOCKSPACE, name);
+	if (connected_nodes == all_nodes) {
+		for (node = nodes; node; node = node->next) {
+			if (node == local_node)
+				continue;
+			sent |= send_msg(node, MSG_STOP_LOCKSPACE, name);
+		}
 	}
 	if (!sent)
 		update_lockspace(ls);
@@ -958,13 +960,12 @@ proto_close(int fd, struct node *node)
 		node->outgoing_fd = -1;
 		connected_nodes &= ~node_mask(node);
 		for (ls = lockspaces; ls; ls = ls->next) {
-			if (ls->members & node_mask(local_node)) {
-				release_lockspace(ls, true);
-			} else {
-				ls->joining = 0;
-				ls->leaving = ls->members;
+			ls->joining = 0;
+			ls->leaving = ls->members & ~node_mask(local_node);
+			if (ls->leaving)
 				update_lockspace(ls);
-			}
+			if (ls->members & node_mask(local_node))
+				release_lockspace(ls, true);
 		}
 	}
 }
@@ -1026,6 +1027,11 @@ proto_join_lockspace(struct node *node, const char *name)
 	ls = find_lockspace(name);
 	if (!ls)
 		return;
+	if (ls->members & node_mask(node)) {
+		warn("MSG_LEAVE_LOCKSPACE: Node %u already is a member",
+		     node->nodeid);
+		return;
+	}
 	ls->joining |= node_mask(node);
 	ls->stopping &= ~node_mask(node);
 	if (!(ls->stopping & connected_nodes))
@@ -1043,6 +1049,11 @@ proto_leave_lockspace(struct node *node, const char *name)
 	ls = find_lockspace(name);
 	if (!ls)
 		return;
+	if (!(ls->members & node_mask(node))) {
+		warn("MSG_LEAVE_LOCKSPACE: Node %u is not a member",
+		     node->nodeid);
+		return;
+	}
 	ls->leaving |= node_mask(node);
 	ls->stopping &= ~node_mask(node);
 	if (!(ls->stopping & connected_nodes))
