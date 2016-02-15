@@ -32,5 +32,6 @@ extern void write_pathf(void *value, int len, const char *path_format, ...);
 extern void printf_pathf(const char *value_format, const char *path_format, ...);
 
 extern bool verbose;
+extern bool debug;
 
 #endif  /* __COMMON_H */

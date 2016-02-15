@@ -19,13 +19,13 @@
  */
 
 /*
- * FakeDLM is a replacement for dlm_controld for testing DLM only.  It assumes
+ * FakeDLM is a replacement for dlm_controld for testing purposes.  It assumes
  * perfect network connectivity and is not intended or suitable for controlling
  * DLM in production use.
  *
  * Start FakeDLM with a list of all the node names or node IP addresses on the
- * command line, in the same order.  The cluster nodes will connect to each
- * other, and FakeDLM will start managing lockspace membership.
+ * command line, in the same order on all nodes.  The cluster nodes will then
+ * connect to each other, and FakeDLM will start managing lockspace membership.
  *
  * A very simple TCP-based node coordination protocol independent from DLM's
  * internal protocol is used.  Message types:
@@ -56,9 +56,9 @@
  *   the lockspace once there are no more pending "locks" on the lockspace by
  *   other nodes.
  *
- * When a node loses connectivity to any of its peers (other then MSG_CLOSE
- * requests; see below), it leaves all lockspaces and waits for full
- * connectivity to be established again.
+ * When a node loses connectivity to any of its peers (but not when it closes a
+ * connection in response to a MSG_CLOSE * requests), it leaves all lockspaces
+ * and waits for full connectivity to be re-established.
  */
 
 #define _GNU_SOURCE
@@ -170,6 +170,7 @@ struct proto_msg {
 };
 
 bool verbose;
+bool debug;
 
 static const char *progname;
 static char *cluster_name;
@@ -535,6 +536,25 @@ release_lockspaces(bool force)
 		release_lockspace(ls, force);
 }
 
+static void
+lockspace_status(struct lockspace *ls, const char *status)
+{
+	if (debug) {
+		printf("Lockspace %s %s: stopping=", ls->name, status);
+		print_nodes(stdout, ls->stopping);
+		printf(", stopped=");
+		print_nodes(stdout, ls->stopped);
+		printf(", joining=");
+		print_nodes(stdout, ls->joining);
+		printf(", leaving=");
+		print_nodes(stdout, ls->leaving);
+		printf(", members=");
+		print_nodes(stdout, ls->members);
+		printf("\n");
+		fflush(stdout);
+	}
+}
+
 /*
  * Triggered to update the local configuration of a logspace once it has been
  * stopped cluster-wide.  When the local node is joining a lockspace, add all
@@ -625,6 +645,7 @@ update_lockspace(struct lockspace *ls)
 	ls->stopping = 0;
 	ls->joining = 0;
 	ls->leaving = 0;
+	lockspace_status(ls, "updated");
 }
 
 /*
@@ -635,6 +656,7 @@ update_lockspace(struct lockspace *ls)
 static void
 lockspace_stopped(struct lockspace *ls)
 {
+	lockspace_status(ls, "stopped");
 	if (ls->joining & node_mask(local_node)) {
 		struct node *node;
 
@@ -1627,8 +1649,9 @@ static struct option long_options[] = {
 	{ "cluster-name", required_argument, NULL, 'n' },
 	{ "fakedlm-port", required_argument, NULL, 'P' },
 	{ "dlm-port", required_argument, NULL, 'p' },
-	{ "sctp", no_argument, NULL, 2 },
 	{ "verbose", no_argument, NULL, 'v' },
+	{ "sctp", no_argument, NULL, 2 },
+	{ "debug", no_argument, NULL, 3 },
 	{ }
 };
 
@@ -1646,6 +1669,10 @@ int main(int argc, char *argv[])
 
 		case 2:  /* --sctp */
 			dlm_protocol = PROTO_SCTP;
+			break;
+
+		case 3:  /* --debug */
+			debug = true;
 			break;
 
 		case 'n':  /* --cluster-name */
