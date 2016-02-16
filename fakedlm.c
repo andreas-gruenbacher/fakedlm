@@ -124,6 +124,7 @@ struct node {
 
 struct lockspace {
 	char *name;
+	uint32_t global_id;
 	short minor;
 	int control_fd;
 	node_mask_t members;
@@ -417,6 +418,15 @@ find_lockspace(const char *name)
 	return NULL;
 }
 
+static uint32_t
+global_id(const char *name)
+{
+	char full_name[strlen(name) + 8];
+
+	snprintf(full_name, sizeof(full_name), "dlm:ls:%s", name);
+	return cpgname_to_crc(full_name, strlen(full_name) + 1);
+}
+
 /*
  * Create a new lockspace in-memory object.
  */
@@ -432,11 +442,14 @@ new_lockspace(const char *name)
 	ls->name = strdup(name);
 	if (!ls->name)
 		fail(NULL);
+	ls->global_id = global_id(name);
 	ls->minor = -1;
 	ls->control_fd = -1;
 	ls->stopped = node_mask(local_node);
 	ls->next = lockspaces;
 	lockspaces = ls;
+	printf("New lockspace '%s' [%04x]\n", ls->name, ls->global_id);
+	fflush(stdout);
 	return ls;
 }
 
@@ -582,14 +595,7 @@ update_lockspace(struct lockspace *ls)
 	struct node *node;
 
 	if (ls->joining & node_mask(local_node)) {
-		char *full_name;
-		uint32_t global_id;
-
-		if (asprintf(&full_name, "dlm:ls:%s", ls->name) == -1)
-			fail(NULL);
-		global_id = cpgname_to_crc(full_name, strlen(full_name) + 1);
-		free(full_name);
-		printf_pathf("%u", "%s/%s/id", global_id, DLM_SYSFS_DIR, ls->name);
+		printf_pathf("%u", "%s/%s/id", ls->global_id, DLM_SYSFS_DIR, ls->name);
 		if (local_node->nodir)
 			printf_pathf("%d", "%s/%s/nodir", 1, DLM_SYSFS_DIR, ls->name);
 		mkdirf(0777, "%sspaces/%s", CONFIG_DLM_CLUSTER, ls->name);
