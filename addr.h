@@ -11,7 +11,6 @@
 #include <stdbool.h>
 
 struct addr {
-	struct addr *next;
 	int family;
 	int socktype;
 	int protocol;
@@ -19,8 +18,8 @@ struct addr {
 	struct sockaddr sa[0];
 };
 
-extern struct addr *find_addrs(const char *name);
+extern struct addr *find_addr(const char *name);
 extern bool addr_equal(const struct sockaddr *sa1, const struct sockaddr *sa2);
-extern bool has_local_addrs(const struct addr *addrs);
+extern bool is_local_addr(const struct addr *addr);
 
 #endif  /* __ADDR_H */

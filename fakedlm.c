@@ -114,7 +114,7 @@ typedef uint32_t node_mask_t;
 struct node {
 	char *name;
 	int nodeid;
-	struct addr *addrs;
+	struct addr *addr;
 	int outgoing_fd;
 	int connecting_fd;
 	bool nodir;
@@ -399,7 +399,7 @@ new_node(const char *name)
 	if (!node->name)
 		fail(NULL);
 	node->weight = 1;
-	node->addrs = find_addrs(name);
+	node->addr = find_addr(name);
 	node->nodeid = -1;
 	node->outgoing_fd = -1;
 	node->connecting_fd = -1;
@@ -925,12 +925,6 @@ monitor_kernel(void)
 		fail(DLM_MONITOR_PATH);
 }
 
-static bool
-node_is_local(const struct node *node)
-{
-	return has_local_addrs(node->addrs);
-}
-
 /*
  * Create a list of node objects along with all the network addresses
  * associated with each node.  Determine which of the nodes is local.
@@ -953,7 +947,7 @@ parse_nodes(char *node_names[], int count)
 		last = &node->next;
 
 		node->nodeid = n + 1;
-		if (node_is_local(node)) {
+		if (is_local_addr(node->addr)) {
 			if (local_node) {
 				fprintf(stderr, "Nodes %s and %s are both "
 					"local", local_node->name, node->name);
@@ -1161,12 +1155,8 @@ sockaddr_to_node(struct sockaddr *sa, socklen_t sa_len)
 	struct node *node;
 
 	for (node = nodes; node; node = node->next) {
-		struct addr *addr;
-
-		for (addr = node->addrs; addr; addr = addr->next) {
-			if (addr_equal(sa, addr->sa))
-				return node;
-		}
+		if (addr_equal(sa, node->addr->sa))
+			return node;
 	}
 	return NULL;
 }
@@ -1263,6 +1253,20 @@ outgoing_connection(int fd, short revents, void *arg)
 	}
 }
 
+static void
+set_port(struct sockaddr_storage *ss, int port)
+{
+	if (ss->ss_family == AF_INET) {
+		struct sockaddr_in *sin = (struct sockaddr_in *)ss;
+
+		sin->sin_port = htons(port);
+	} else /* if (dst.ss_family == AF_INET6) */ {
+		struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)ss;
+
+		sin6->sin6_port = htons(port);
+	}
+}
+
 /*
  * Connect to the first address of each of our peers in non-blocking mode.
  */
@@ -1272,30 +1276,29 @@ connect_to_peers(void)
 	struct node *node;
 
 	for (node = nodes; node; node = node->next) {
-		struct sockaddr_storage ss;
-		struct addr *addr = node->addrs;
+		struct sockaddr_storage src, dst;
+		struct addr *src_addr = local_node->addr;
+		struct addr *dst_addr = node->addr;
 		int fd;
 
 		if (node == local_node)
 			continue;
-		memset(&ss, 0, sizeof(ss));
-		memcpy(&ss, addr->sa, addr->sa_len);
-		if (ss.ss_family == AF_INET) {
-			struct sockaddr_in *sin =
-				(struct sockaddr_in *)&ss;
 
-			sin->sin_port = htons(fakedlm_port);
-		} else if (ss.ss_family == AF_INET6) {
-			struct sockaddr_in6 *sin6 =
-				(struct sockaddr_in6 *)&ss;
+		memset(&src, 0, sizeof(dst));
+		memcpy(&src, src_addr->sa, src_addr->sa_len);
+		set_port(&src, 0);
 
-			sin6->sin6_port = htons(fakedlm_port);
-		}
-		fd = socket(addr->family, addr->socktype | SOCK_NONBLOCK,
-			    addr->protocol);
+		memset(&dst, 0, sizeof(dst));
+		memcpy(&dst, dst_addr->sa, dst_addr->sa_len);
+		set_port(&dst, fakedlm_port);
+
+		fd = socket(dst_addr->family, dst_addr->socktype | SOCK_NONBLOCK,
+			    dst_addr->protocol);
 		if (fd == -1)
 			fail(NULL);
-		if (connect(fd, (struct sockaddr *)&ss, addr->sa_len) == -1) {
+		if (bind(fd, (struct sockaddr *)&src, src_addr->sa_len) == -1)
+			fail(NULL);
+		if (connect(fd, (struct sockaddr *)&dst, dst_addr->sa_len) == -1) {
 			if (errno != EINPROGRESS)
 				fail(NULL);
 			node->connecting_fd = fd;
@@ -1359,12 +1362,12 @@ listen_to_peers(void)
 }
 
 /*
- * Tell DLM about a new node's ID, addresses, and whether the node is local.
+ * Tell DLM about a new node's ID, address, and whether the node is local.
  */
 static void
 configure_node(struct node *node)
 {
-	struct addr *addr;
+	struct sockaddr_storage ss;
 
 	mkdirf(0777, "%scomms/%d", CONFIG_DLM_CLUSTER, node->nodeid);
 	printf_pathf("%d", "%scomms/%d/nodeid", node->nodeid, CONFIG_DLM_CLUSTER,
@@ -1373,14 +1376,10 @@ configure_node(struct node *node)
 		printf_pathf("1", "%scomms/%d/local", CONFIG_DLM_CLUSTER,
 			     node->nodeid);
 	}
-	for (addr = node->addrs; addr; addr = addr->next) {
-		struct sockaddr_storage ss;
-
-		memcpy(&ss, addr->sa, addr->sa_len);
-		memset((char *)&ss + addr->sa_len, 0, sizeof(ss) - addr->sa_len);
-		write_pathf(&ss, sizeof(ss), "%scomms/%d/addr",
-			    CONFIG_DLM_CLUSTER, node->nodeid);
-	}
+	memset(&ss, 0, sizeof(ss));
+	memcpy(&ss, node->addr->sa, node->addr->sa_len);
+	write_pathf(&ss, sizeof(ss), "%scomms/%d/addr",
+		    CONFIG_DLM_CLUSTER, node->nodeid);
 }
 
 /*

@@ -31,12 +31,11 @@
 #include "addr.h"
 
 struct addr *
-find_addrs(const char *name)
+find_addr(const char *name)
 {
 	struct addrinfo hints;
 	struct addrinfo *ai = NULL;
-	struct addr *addrs = NULL;
-	struct addr **tail = &addrs;
+	struct addr *addr;
 	int g;
 
 	memset(&hints, 0, sizeof(hints));
@@ -50,8 +49,6 @@ find_addrs(const char *name)
 		exit(1);
 	}
 	for(; ai; ai = ai->ai_next) {
-		struct addr *addr;
-
 		if (ai->ai_family == AF_INET) {
 			struct sockaddr_in *sin =
 				(struct sockaddr_in *)ai->ai_addr;
@@ -76,18 +73,16 @@ find_addrs(const char *name)
 		addr->protocol = ai->ai_protocol;
 		addr->sa_len = ai->ai_addrlen;
 		memcpy(addr->sa, ai->ai_addr, ai->ai_addrlen);
-		addr->next = NULL;
-		*tail = addr;
-		tail = &addr->next;
+		break;
 	}
 	freeaddrinfo(ai);
 
-	if (!addrs) {
+	if (!addr) {
 		fprintf(stderr, "%s: %s\n",
 			name,
 			gai_strerror(EAI_NODATA));
 	}
-	return addrs;
+	return addr;
 }
 
 bool
@@ -116,23 +111,18 @@ addr_equal(const struct sockaddr *sa1, const struct sockaddr *sa2)
 }
 
 bool
-has_local_addrs(const struct addr *addrs)
+is_local_addr(const struct addr *addr)
 {
 	static struct ifaddrs *ifa = NULL;
-	const struct addr *addr;
+	const struct ifaddrs *i;
 
 	if (!ifa) {
 		if (getifaddrs(&ifa) == -1)
 			fail("Cannot determine local network interface addresses\n");
 	}
-
-	for (addr = addrs; addr; addr = addr->next) {
-		const struct ifaddrs *i;
-
-		for (i = ifa; i; i = i->ifa_next) {
-			if (addr_equal(addr->sa, i->ifa_addr))
-				return true;
-		}
+	for (i = ifa; i; i = i->ifa_next) {
+		if (addr_equal(addr->sa, i->ifa_addr))
+			return true;
 	}
 	return false;
 }
