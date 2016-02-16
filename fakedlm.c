@@ -448,8 +448,6 @@ new_lockspace(const char *name)
 	ls->stopped = node_mask(local_node);
 	ls->next = lockspaces;
 	lockspaces = ls;
-	printf("New lockspace '%s' [%04x]\n", ls->name, ls->global_id);
-	fflush(stdout);
 	return ls;
 }
 
@@ -795,7 +793,7 @@ lockspace_online_uevent(const char *name)
 		printf_pathf("%d", "%s/%s/event_done", 0, DLM_SYSFS_DIR, ls->name);
 		return;
 	}
-	printf("Joining lockspace '%s'\n", name);
+	printf("Joining lockspace '%s' [%04x]\n", ls->name, ls->global_id);
 	fflush(stdout);
 	/* (Lockspace not started, yet.) */
 	ls->joining |= node_mask(local_node);
@@ -1472,7 +1470,8 @@ recv_uevent(int uevent_fd, short revents, void *arg)
 	if (len < 0)
 		fail(NULL);
 	buf[len] = 0;
-	print_uevent(buf, len);
+	if (verbose)
+		print_uevent(buf, len);
 	if (len >= 19 &&
 	    strncmp(buf, "online@/kernel/dlm/", 19) == 0)
 		lockspace_online_uevent(buf + 19);
@@ -1656,7 +1655,7 @@ static struct option long_options[] = {
 	{ "dlm-port", required_argument, NULL, 'p' },
 	{ "verbose", no_argument, NULL, 'v' },
 	{ "sctp", no_argument, NULL, 2 },
-	{ "debug", no_argument, NULL, 3 },
+	{ "debug", no_argument, NULL, 'd' },
 	{ }
 };
 
@@ -1666,7 +1665,7 @@ int main(int argc, char *argv[])
 	int opt, count = 0;
 
 	progname = argv[0];
-	while ((opt = getopt_long(argc, argv, "-n:P:p:v", long_options, NULL)) != -1) {
+	while ((opt = getopt_long(argc, argv, "-n:P:p:vd", long_options, NULL)) != -1) {
 		switch(opt) {
 		case 1:  /* node */
 			node_names[count++] = optarg;
@@ -1676,7 +1675,7 @@ int main(int argc, char *argv[])
 			dlm_protocol = PROTO_SCTP;
 			break;
 
-		case 3:  /* --debug */
+		case 'd':  /* --debug */
 			debug = true;
 			break;
 
